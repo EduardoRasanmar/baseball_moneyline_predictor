@@ -2,6 +2,7 @@
 """
 Build pre-game features with 10-game rolling averages from teamstats.
 Merges onto gameinfo and saves model-ready dataset.
+Adds: wins, runs_allowed, run_diff, rest_days, h2h_wins, pitcher_rolling_wins.
 """
 
 import pandas as pd
@@ -11,6 +12,7 @@ from pathlib import Path
 DATA_DIR = Path("data")
 TEAMSTATS_PATH = DATA_DIR / "teamstats.csv"
 GAMEINFO_PATH = DATA_DIR / "gameinfo.csv"
+PITCHING_PATH = DATA_DIR / "pitching.csv"
 OUTPUT_PATH = DATA_DIR / "model_data.csv"
 
 ROLLING_WINDOW = 10
@@ -44,6 +46,8 @@ def add_derived_metrics(df: pd.DataFrame) -> pd.DataFrame:
     df["k9"] = _safe_divide(9 * df["p_k"], innings)
     df["bb9"] = _safe_divide(9 * df["p_w"], innings)
     df["hr9"] = _safe_divide(9 * df["p_hr"], innings)
+    # Runs allowed (p_r) and run differential
+    df["run_diff"] = df["b_r"] - df["p_r"]
     return df
 
 
@@ -53,7 +57,8 @@ def compute_rolling_stats(df: pd.DataFrame, window: int = ROLLING_WINDOW) -> pd.
     Uses shift(1).rolling(window).mean() to avoid leakage.
     """
     cols_to_roll = [
-        "b_r", "b_h", "b_hr", "b_w", "b_k", "b_sb",
+        "win", "b_r", "p_r", "run_diff",
+        "b_h", "b_hr", "b_w", "b_k", "b_sb",
         "obp", "slg", "ops",
         "p_er", "p_h", "p_hr", "p_w", "p_k",
         "era", "whip", "k9", "bb9", "hr9",
@@ -112,7 +117,7 @@ def main():
     df["home_win"] = (df["wteam"] == df["hometeam"]).astype(int)
 
     # Difference features (home - visitor)
-    for base in ["b_r", "obp", "slg", "ops", "era", "whip", "k9", "bb9", "hr9", "b_h", "b_hr", "b_w", "b_k", "b_sb", "d_e"]:
+    for base in ["win", "b_r", "p_r", "run_diff", "obp", "slg", "ops", "era", "whip", "k9", "bb9", "hr9", "b_h", "b_hr", "b_w", "b_k", "b_sb", "d_e"]:
         vc, hc = f"vis_{base}{suffix}", f"home_{base}{suffix}"
         if vc in df.columns and hc in df.columns:
             df[f"diff_{base}{suffix}"] = df[hc].sub(df[vc])
@@ -121,6 +126,88 @@ def main():
     df["daynight"] = df["daynight"].map({"day": 1, "night": 0}).fillna(-1)
     df["temp"] = pd.to_numeric(df["temp"], errors="coerce")
     df["windspeed"] = pd.to_numeric(df["windspeed"], errors="coerce")
+
+    # --- Rest days ---
+    gi = gameinfo.copy()
+    gi["date"] = pd.to_numeric(gi["date"], errors="coerce")
+    gi = gi.sort_values(["date", "gid"])
+    vis_rows = gi[["gid", "date", "visteam"]].assign(role="vis")
+    home_rows = gi[["gid", "date", "hometeam"]].assign(role="home")
+    vis_rows = vis_rows.rename(columns={"visteam": "team"})
+    home_rows = home_rows.rename(columns={"hometeam": "team"})
+    team_games = pd.concat([vis_rows, home_rows], ignore_index=True)
+    team_games = team_games.sort_values(["team", "date", "gid"])
+    team_games["prev_date"] = team_games.groupby("team")["date"].shift(1)
+    team_games["rest_days"] = np.where(
+        team_games["prev_date"].isna(),
+        np.nan,
+        np.where(team_games["date"] == team_games["prev_date"], 0, team_games["date"] - team_games["prev_date"])
+    )
+    rest_vis = team_games[team_games["role"] == "vis"][["gid", "team", "rest_days"]].rename(
+        columns={"team": "visteam", "rest_days": "vis_rest_days"}
+    )
+    rest_home = team_games[team_games["role"] == "home"][["gid", "team", "rest_days"]].rename(
+        columns={"team": "hometeam", "rest_days": "home_rest_days"}
+    )
+    df = df.merge(rest_vis, on=["gid", "visteam"], how="left")
+    df = df.merge(rest_home, on=["gid", "hometeam"], how="left")
+    df["away_rest_days"] = df["vis_rest_days"]
+
+    # --- H2H wins (last 10 matchups between these two teams) ---
+    gi_sorted = gi.sort_values("date").reset_index(drop=True)
+    h2h_home = []
+    h2h_vis = []
+    for idx, row in gi_sorted.iterrows():
+        d, v, h = row["date"], row["visteam"], row["hometeam"]
+        prior = gi_sorted[(gi_sorted["date"] < d) & (
+            ((gi_sorted["visteam"] == v) & (gi_sorted["hometeam"] == h)) |
+            ((gi_sorted["visteam"] == h) & (gi_sorted["hometeam"] == v))
+        )].tail(10)
+        if len(prior) == 0:
+            h2h_home.append(np.nan)
+            h2h_vis.append(np.nan)
+            continue
+        home_wins = (
+            ((prior["visteam"] == h) & (prior["wteam"] == h)) |
+            ((prior["hometeam"] == h) & (prior["wteam"] == h))
+        ).sum()
+        vis_wins = len(prior) - home_wins
+        h2h_home.append(home_wins / len(prior))
+        h2h_vis.append(vis_wins / len(prior))
+    df["home_rolling_avg_h2h_wins_10"] = h2h_home
+    df["away_rolling_avg_h2h_wins_10"] = h2h_vis
+
+    # --- Pitcher rolling wins centered (starting pitcher, last 10 starts) ---
+    pit = pd.read_csv(PITCHING_PATH, low_memory=False)
+    pit["date"] = pd.to_numeric(pit["date"], errors="coerce")
+    starters = pit[pit["p_seq"] == 1][["gid", "team", "id", "date"]].copy()
+    gi_pit = gameinfo[["gid", "wteam"]].copy()
+    starters = starters.merge(gi_pit, on="gid", how="left")
+    starters["pitcher_win"] = (starters["wteam"] == starters["team"]).astype(int)
+    starters = starters.sort_values(["id", "date"])
+    starters["pitcher_wins_avg10"] = (
+        starters.groupby("id")["pitcher_win"]
+        .transform(lambda x: x.shift(1).rolling(10, min_periods=1).mean())
+    )
+    starters["pitcher_wins_centered_10"] = starters["pitcher_wins_avg10"] - 0.5
+    pit_vis = starters.rename(columns={"team": "visteam", "pitcher_wins_centered_10": "vis_pitcher_rolling_wins_centered_10"})[
+        ["gid", "visteam", "vis_pitcher_rolling_wins_centered_10"]
+    ]
+    pit_home = starters.rename(columns={"team": "hometeam", "pitcher_wins_centered_10": "home_pitcher_rolling_wins_centered_10"})[
+        ["gid", "hometeam", "home_pitcher_rolling_wins_centered_10"]
+    ]
+    df = df.merge(pit_vis, on=["gid", "visteam"], how="left")
+    df = df.merge(pit_home, on=["gid", "hometeam"], how="left")
+
+    # Aliases for user-requested names (away = vis)
+    df["away_rolling_avg_wins_10"] = df[f"vis_win{suffix}"]
+    df["home_rolling_avg_wins_10"] = df[f"home_win{suffix}"]
+    df["away_rolling_avg_runs_10"] = df[f"vis_b_r{suffix}"]
+    df["home_rolling_avg_runs_10"] = df[f"home_b_r{suffix}"]
+    df["away_rolling_avg_runs_allowed_10"] = df[f"vis_p_r{suffix}"]
+    df["home_rolling_avg_runs_allowed_10"] = df[f"home_p_r{suffix}"]
+    df["away_rolling_avg_run_diff_10"] = df[f"vis_run_diff{suffix}"]
+    df["home_rolling_avg_run_diff_10"] = df[f"home_run_diff{suffix}"]
 
     # Save
     df.to_csv(OUTPUT_PATH, index=False)

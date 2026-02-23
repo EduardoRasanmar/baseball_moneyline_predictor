@@ -109,6 +109,62 @@ gameinfo (base: 1 row/game)
 
 ---
 
+## Feature Selection Rationale
+
+### Why teamstats only (not batting, pitching, fielding, or plays)?
+
+- **teamstats** already has team-level totals per game: one row per team per game with batting, pitching, and fielding aggregates. No aggregation step needed.
+- **batting.csv** and **pitching.csv** are player-level; we’d need to sum by `(gid, team)` to get team stats, which duplicates teamstats.
+- **plays.csv** is event-level; useful for advanced metrics (run expectancy, clutch) but adds complexity and extra processing.
+- **allplayers.csv** is player-season level; useful for roster strength or platoon splits but requires more joins and logic.
+
+Using **teamstats** alone gives a simple, low-friction pipeline. Other sources can be added later if they improve performance.
+
+### Why these batting metrics?
+
+- **Runs** — Direct outcome; most predictive of scoring.
+- **Hits, HR, walks, strikeouts** — Core components of run production and plate discipline.
+- **OBP, SLG, OPS** — Standard summaries of hitting; OPS is strongly correlated with runs.
+- **Stolen bases** — Small but meaningful indicator of aggressiveness and baserunning.
+
+### Why these pitching metrics?
+
+- **ERA** — Standard measure of run prevention.
+- **WHIP** — Baserunners per inning; predictive of scoring allowed.
+- **K/9, BB/9, HR/9** — Components of ERA; stable over short windows.
+
+### Why errors (fielding)?
+
+- **Errors** — Reflect defensive quality and “extra outs” given to opponents; cheap to compute from teamstats.
+
+### Why difference features (home − visitor)?
+
+- Comparing home vs visitor stats reduces multicollinearity and directly encodes “who is favored.”
+- A single `diff_runs_avg10` often outperforms separate `vis_runs` and `home_runs` because it captures relative strength.
+
+### Why rolling window of 10?
+
+- Balances recency (last 10 games) with sample size.
+- 10 games ≈ two weeks; captures short-term form without excessive noise.
+- Early-season games have fewer prior games; those rows get NaN or partial windows.
+
+### Why daynight, temp, windspeed?
+
+- **Daynight** — Park and visibility effects; different run environments.
+- **Temp** — Warm weather tends to favor offense.
+- **Windspeed** — Affects fly balls in some parks.
+
+### What was excluded (for now)?
+
+- **batting/pitching** — Redundant with teamstats for team totals.
+- **plays** — Useful for run expectancy, leverage, etc., but adds complexity.
+- **allplayers** — Roster/lineup strength is a later iteration.
+- **Doubles, triples** — SLG already incorporates them.
+- **Sacrifice hits/flies, HBP, IBB** — Minor; OBP and OPS capture most of the effect.
+- **Defensive stats beyond errors** — Po, assists, double plays are noisier and less predictive than errors over short windows.
+
+---
+
 ## Resulting Schema (conceptual)
 
 | Column | Source |

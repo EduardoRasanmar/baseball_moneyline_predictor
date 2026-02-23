@@ -58,12 +58,36 @@ Reference for all columns in `data/model_data.csv`. Each row represents one game
 
 ---
 
+## User-Requested Features (aliases)
+
+These match the requested `FEATURE_COLS` naming (away = visitor).
+
+| Column | Description |
+|--------|-------------|
+| **home_rolling_avg_wins_10** | Home team: win rate in last 10 games (0–1) |
+| **away_rolling_avg_wins_10** | Visitor: win rate in last 10 games |
+| **home_rolling_avg_runs_10** | Home: runs scored per game (alias of home_b_r_avg10) |
+| **away_rolling_avg_runs_10** | Visitor: runs scored per game |
+| **home_rolling_avg_runs_allowed_10** | Home: runs allowed per game (p_r) |
+| **away_rolling_avg_runs_allowed_10** | Visitor: runs allowed per game |
+| **home_rolling_avg_run_diff_10** | Home: run differential (runs scored − runs allowed) per game |
+| **away_rolling_avg_run_diff_10** | Visitor: run differential per game |
+| **home_rolling_avg_h2h_wins_10** | Home team’s win rate in last 10 head-to-head games vs opponent |
+| **away_rolling_avg_h2h_wins_10** | Visitor’s win rate in last 10 H2H games |
+| **home_rest_days** | Days since home team’s last game (0 = same day / doubleheader) |
+| **away_rest_days** | Days since visitor’s last game |
+| **home_pitcher_rolling_wins_centered_10** | Starting pitcher’s win rate in last 10 starts − 0.5 (centered at .500) |
+| **vis_pitcher_rolling_wins_centered_10** | Visitor’s starter: same metric |
+
+---
+
 ## Rolling Batting Features (10-game average, prior games only)
 
 All `*_avg10` columns are the average of that team's last 10 games **before** the current game.
 
 | Column | Description |
 |--------|-------------|
+| **vis_win_avg10** | Visitor: win rate (1 = win, 0 = loss) per game |
 | **vis_b_r_avg10** | Visitor: runs per game |
 | **vis_b_h_avg10** | Visitor: hits per game |
 | **vis_b_hr_avg10** | Visitor: home runs per game |
@@ -82,6 +106,8 @@ All `*_avg10` columns are the average of that team's last 10 games **before** th
 | **home_obp_avg10** | Home: on-base percentage |
 | **home_slg_avg10** | Home: slugging percentage |
 | **home_ops_avg10** | Home: OPS |
+| **vis_run_diff_avg10** | Visitor: run differential (runs scored − runs allowed) per game |
+| **home_run_diff_avg10** | Home: run differential per game |
 
 ---
 
@@ -89,6 +115,8 @@ All `*_avg10` columns are the average of that team's last 10 games **before** th
 
 | Column | Description |
 |--------|-------------|
+| **vis_p_r_avg10** | Visitor: runs allowed per game (total, not just earned) |
+| **home_p_r_avg10** | Home: runs allowed per game |
 | **vis_p_er_avg10** | Visitor: earned runs allowed per game (raw) |
 | **vis_p_h_avg10** | Visitor: hits allowed per game |
 | **vis_p_hr_avg10** | Visitor: home runs allowed per game |
@@ -127,7 +155,10 @@ All `diff_*` columns are `home_*_avg10 − vis_*_avg10`. Positive = home team ah
 
 | Column | Description |
 |--------|-------------|
+| **diff_win_avg10** | Home − visitor win rate |
 | **diff_b_r_avg10** | Home − visitor runs per game |
+| **diff_p_r_avg10** | Home − visitor runs allowed (negative = home allows fewer) |
+| **diff_run_diff_avg10** | Home − visitor run differential |
 | **diff_obp_avg10** | Home − visitor OBP |
 | **diff_slg_avg10** | Home − visitor SLG |
 | **diff_ops_avg10** | Home − visitor OPS |
